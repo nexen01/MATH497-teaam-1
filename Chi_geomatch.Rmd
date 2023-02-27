@@ -1,0 +1,115 @@
+install.packages("readr")
+install.packages("dplyr")
+install.packages("sf")
+install.packages("leaflet")
+install.packages("stringr")
+install.packages("stringdist")
+install.packages("party")
+install.packages("tigris")
+install.packages("rgdal")
+install.packages("factoextra")
+install.packages("mclust")
+install.packages(c("ggplot2", "ggpubr", "tidyverse", "broom", "AICcmodavg"))
+
+library(mclust)
+library(factoextra)
+library(readr)
+library(dplyr)
+library(sf)
+library(leaflet)
+library(stringr)
+library(stringdist)
+library(party)
+library(tigris)
+library(sp)
+library(rgdal)
+library(ggplot2)
+library(ggpubr)
+library(tidyverse)
+library(broom)
+library(AICcmodavg)
+
+
+uni <- read_csv("https://drive.google.com/file/d/1ER7MsSYe9oUt5nb22cC8ZscJQoTehzh7/view")
+
+
+
+#City of Chicago data
+homeValues <- read_csv("/Users/RyanCiminski/desktop/chicago_homes.csv")
+
+taxdata_sample <- read_csv("https://raw.githubusercontent.com/nexen01/MATH497-teaam-1/main/csvs/Assessor-1.csv?token=GHSAT0AAAAAAB7BNVTBFSPREF4WHJPHUMPUY7T4Z4A")
+
+chilead <- read_csv("/Users/ryanciminski/desktop/Attempt2 - Initial.csv")
+
+
+#Federal Census 
+blockgroups <- block_groups(state="IL")
+blockgroups <- st_transform(blockgroups, "+proj=longlat +datum=WGS84")
+base_projection <- "+proj=longlat +datum=WGS84"
+
+#Map it
+leaflet(blockgroups) %>%  addPolygons(color="blue",weight=2) %>% addProviderTiles("CartoDB.Positron") %>% addCircles(data = taxdata_sample, weight = 5, color ="red")
+
+#Clean chilead
+
+names(chilead) <- make.names(names(chilead), unique=TRUE)
+
+unique_chilead <- print(unique(chilead[c("X1st.Draw")]))
+View(unique_chilead)
+
+#Cleaning out rows
+chilead$X1st.Draw <- gsub("See Follow-Up Sequential Sampling Table for Results", NA, chilead$X1st.Draw, fixed=TRUE) 
+chilead$X1st.Draw <- gsub("Customer declined further testing", NA, chilead$X1st.Draw, fixed=TRUE) 
+chilead$X1st.Draw <- gsub("<0.5", NA, chilead$X1st.Draw, fixed=TRUE) 
+chilead$X1st.Draw <- gsub("<1", NA, chilead$X1st.Draw, fixed=TRUE) 
+chilead$X1st.Draw <- gsub("Customer was non-responsive", NA, chilead$X1st.Draw, fixed=TRUE) 
+chilead$X1st.Draw <- gsub("<1.0", NA, chilead$X1st.Draw, fixed=TRUE) 
+chilead$X1st.Draw <- gsub("< 1", NA, chilead$X1st.Draw, fixed=TRUE) 
+
+#Calculate means 
+chilead$X1st.Draw <- as.numeric(chilead$X1st.Draw) 
+mean(chilead$X1st.Draw, na.rm=TRUE)
+
+#Clustering
+
+fit <- kmeans(chilead, 5)
+plot(chilead_fit) # plot results 
+summary(chilead_fit) # display the best model
+
+#ANOVA clustering
+
+chilead % > %
+	group_by(1st Draw) % > %
+	summarise(
+	  count_1st_draw = n(),
+		mean_time = mean(time, na.rm = TRUE),
+		sd_time = sd(time, na.rm = TRUE)
+	)
+	
+#Matching
+
+## Calculate Jaccard distance
+geo_match_noNA$jaccard_dist <-  base::apply(geo_match_noNA[,var_names],1,
+                                       function(y){y <- y[order(nchar(y))]; 
+                                       stringdist(paste(" ",y[1]," "),paste(" ",y[2]," "),
+                                                  method="jaccard",q=2)})
+## Calculate Cosine distance
+geo_match_noNA$cosine_dist <-  base::apply(geo_match_noNA[,var_names],1,
+                                      function(y){y <- y[order(nchar(y))]; 
+                                      stringdist(paste(" ",y[1]," "),paste(" ",y[2]," "),
+                                                 method="cosine",q=2)})  
+
+## Calculate Jaro-Winkler distance
+geo_match_noNA$jw_dist <-  base::apply(geo_match_noNA[,var_names],1,
+                                  function(y){y <- y[order(nchar(y))]; 
+                                  stringdist(paste(y[1]),paste(y[2]),
+                                             method="jw")}) 
+
+
+summary(chilead)
+
+## Plot the jw distance and the jaccard distance, and see how simlar they are.
+##  Note what appears to be a structural break around .6 on the x-axis.
+plot(jw_dist ~ jaccard_dist, data=geo_match_noNA)
+
+View(geo_match_noNA)
