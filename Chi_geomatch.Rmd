@@ -30,7 +30,61 @@ library(broom)
 library(AICcmodavg)
 
 
-uni <- read_csv("https://drive.google.com/file/d/1ER7MsSYe9oUt5nb22cC8ZscJQoTehzh7/view")
+
+geocode_lead <- read_csv("https://raw.githubusercontent.com/nexen01/MATH497-teaam-1/main/leadResultsGeocoded.csv")
+
+geocode_lead <- tidyr::separate(geocode_lead, geocode, into = c("long", "lat"), sep = ",")
+
+#clean up geo code
+geocode_lead$long <- gsub("c\\(", "", geocode_lead$long)
+geocode_lead$lat <- gsub("\\)", "", geocode_lead$lat)
+
+geocode_lead$long <- str_sub(geocode_lead$long, 2)
+geocode_lead$lat <- str_sub(geocode_lead$lat, end = -2)
+
+
+#change to numeric
+geocode_lead$long <- as.numeric(gsub(".", "", geocode_lead$long, fixed = TRUE))
+geocode_lead$lat <- as.numeric(gsub(".", "", geocode_lead$lat, fixed = TRUE))
+
+#flip lat long
+geocode_lead <- geocode_lead %>% 
+        rename("lat" = 7,
+               "long" = 8)
+
+
+#Remove missing
+geocode_lead <- geocode_lead %>% 
+  filter(is.na(lat) == F & is.na(long) == F) %>% 
+  st_as_sf(coords = c("lat", "long"))
+  
+class(geocode_lead)
+
+geocode_lead <- st_set_crs(geocode_lead, 3628)
+geocode_lead <- st_transform(geocode_lead, 4269)
+
+
+#Download census tract for il
+il <- tracts(state = 17)
+il <- st_as_sf(il)
+
+
+#Take cook county
+cook <- il %>% 
+  filter(COUNTYFP == "031 ") %>% 
+  st_union()
+
+cook %>% 
+  st_transform(3438) %>%   # IL State Plane in feet
+  st_buffer(5280) %>%      # One-mile buffer specified in feet
+  plot()
+  
+#import census data 
+cook_track <- tracts(state = "17", "031") %>% 
+  st_as_sf()
+  
+join_track_lead <- st_join(geocode_lead, cook_track)
+
 
 
 
@@ -47,8 +101,13 @@ blockgroups <- block_groups(state="IL")
 blockgroups <- st_transform(blockgroups, "+proj=longlat +datum=WGS84")
 base_projection <- "+proj=longlat +datum=WGS84"
 
+geocode_lead_rowsample <- sample_rows <- sample(1:nrow(geocode_lead), 10)
+
+
 #Map it
 leaflet(blockgroups) %>%  addPolygons(color="blue",weight=2) %>% addProviderTiles("CartoDB.Positron") %>% addCircles(data = taxdata_sample, weight = 5, color ="red")
+
+leaflet(blockgroups) %>%  addPolygons(color="blue",weight=2) %>% addProviderTiles("CartoDB.Positron") %>% addCircles(data = geocode_lead_rowsample, weight = 1, color ="red")
 
 #Clean chilead
 
@@ -113,3 +172,7 @@ summary(chilead)
 plot(jw_dist ~ jaccard_dist, data=geo_match_noNA)
 
 View(geo_match_noNA)
+
+
+load(url("https://github.com/nexen01/MATH497-teaam-1/raw/d36b56e45100b57dde559733bd8d83e1b0f61552/.RData"))
+
