@@ -10,6 +10,10 @@ install.packages("rgdal")
 install.packages("factoextra")
 install.packages("mclust")
 install.packages(c("ggplot2", "ggpubr", "tidyverse", "broom", "AICcmodavg"))
+install.packages("tidycensus")
+install.packages("deldir")
+install.packages("request")
+
 
 library(mclust)
 library(factoextra)
@@ -28,151 +32,127 @@ library(ggpubr)
 library(tidyverse)
 library(broom)
 library(AICcmodavg)
+library(tidycensus)
+library(deldir)
+library(requests)
+
+options(tigris_use_cache = TRUE)
+
+#Need to save longer decimal points for chr values
+options(digits=15)
+
+#Read in lat/lon + lead data files into R 
+geocode_lead <- read_csv("https://raw.githubusercontent.com/nexen01/MATH497-teaam-1/main/InitLatLon.csv")
+
+#Seperate column geometry
+geocode_lead <- geocode_lead %>%
+     separate(Coordinates, into = c('lat', 'long'), sep=",")
+
+#clean up geo code. Remove parathesis
+geocode_lead$lat <- gsub("[[]", "", geocode_lead$lat)
+geocode_lead$long <- gsub("[]]", "", geocode_lead$long)
 
 
-
-geocode_lead <- read_csv("https://raw.githubusercontent.com/nexen01/MATH497-teaam-1/main/leadResultsGeocoded.csv")
-
-geocode_lead <- tidyr::separate(geocode_lead, geocode, into = c("long", "lat"), sep = ",")
-
-#clean up geo code
-geocode_lead$long <- gsub("c\\(", "", geocode_lead$long)
-geocode_lead$lat <- gsub("\\)", "", geocode_lead$lat)
-
-geocode_lead$long <- str_sub(geocode_lead$long, 2)
-geocode_lead$lat <- str_sub(geocode_lead$lat, end = -2)
-
-
-#change to numeric
-geocode_lead$long <- as.numeric(gsub(".", "", geocode_lead$long, fixed = TRUE))
-geocode_lead$lat <- as.numeric(gsub(".", "", geocode_lead$lat, fixed = TRUE))
+#change to numeric values
+geocode_lead$lat <- as.numeric(as.character(geocode_lead$lat))
+geocode_lead$long <- as.numeric(as.character(geocode_lead$long))
 
 #flip lat long
 geocode_lead <- geocode_lead %>% 
-        rename("lat" = 7,
-               "long" = 8)
+        rename("long" = 3,
+               "lat" = 4)
+
+# add a column with the corresponding census tract.
+#CODE SOURCE: https://stackoverflow.com/questions/51499410/retrieve-census-tract-from-coordinates?noredirect=1&lq=1
 
 
-#Remove missing
-geocode_lead <- geocode_lead %>% 
-  filter(is.na(lat) == F & is.na(long) == F) %>% 
-  st_as_sf(coords = c("lat", "long"))
+#get a map of Illinois' tracts into R
+il <- tidycensus::get_acs(state = "IL", geography = "tract",
+              variables = "B19013_001", geometry = TRUE)
+
+
+
+my_points <- data.frame(
+  x = geocode_lead$lat
+  y = geocode_lead$long
+  %>%
+  # convert the points to same CRS
+  st_as_sf(coords = c("x", "y"),
+           crs = st_crs(il))
+
+geocode_lead$census_code <- apply(geocode_lead, 1, function(row) call_geolocator_latlon(row['lat'], row['long']))
+
+
+   
+
+geocode_lead_sample <- geocode_lead[sample(nrow(geocode_lead), 500), ]
+
+geocode_lead_sample$census_code <- apply(geocode_lead_sample, 1, function(row) call_geolocator_latlon(row['lat'], row['long']))
+
+illinois <- tracts(state = 'IL')
+
+crswgs84=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs")
+states_shape <- readShapePoly("/home/rstudio/states_21basic/states",proj4string=crswgs84,verbose=TRUE)
+
+
+Illinois <- tractShp
+
+tractLookup <- function(x) {
+  pt <- SpatialPoints(data.frame(x = x$long, y = x$lat))
+  Mapping <- over(pt, illinois) # what index number does pt fall inside?
+  Mapping <- data.frame(
+  "GEOID" = as.character(Mapping$GEOID),
+  "State" = as.character(Mapping$STATEFP) , 
+  "County" = as.character(Mapping$COUNTYFP), 
+  "Tract" = as.character(Mapping$TRACTCE), 
+  "Tract_Name" = as.character(Mapping$NAME), 
+  "INTPTLAT" = as.character(Mapping$INTPTLAT),
+  "INTPTLON" = as.character(Mapping$INTPTLON),
+  stringsAsFactors = FALSE)
+  Mapping[is.na(Mapping)] <- "NULL"   
+return(Mapping)
+}
+
+geocode_lead_sample_tract <- tractLookup(spts)
+
+
+
+shape_latlong <- apply(gDistance(spts, tractShp,byid=TRUE),2,min)
+
+latlong_values <- geocode_lead_sample[, c("long", "lat")]
+
+latlong_values_round <- latlong_values %>% mutate_if(is.numeric, round, 5)
+
+
+latlong_values$census_code <- apply(latlong_values, 1, function(row) call_geolocator_latlon(row['long'], row['lat']))
+
+
+
+geocode_lead_sample$census_code_new <- apply(geocode_lead_sample, 1, function(row) call_geolocator_latlon(row['long'], row['lat']))
+
+temp_shapefile <- tempfile()
+download.file("/Users/RyanCiminski/desktop/tl_2022_17_tract.zip", temp_shapefile)
+unzip(temp_shapefile)
+
+census_tracts <- read_sf('/users/ryanciminski/desktop/tl_2022_17_tract.shp')
+
+lead_geos <- geocode_lead_sample[,c("long","lat")] %>%  
+  split(1:nrow(geocode_lead_sample)) %>% ##split each row into its own list, 
+  lapply(FUN=function(x){as.numeric(x) %>% st_point()}) %>%  
+  st_sfc(crs = "+proj=longlat +datum=WGS84")
   
-class(geocode_lead)
 
-geocode_lead <- st_set_crs(geocode_lead, 3628)
-geocode_lead <- st_transform(geocode_lead, 4269)
+latlong_sf <- geocode_lead_sample %>%
+  filter(!is.na(lat), !is.na(long)) %>%
+  st_as_sf(coords = c("long", "lat"), crs = st_crs(census_tracts))
 
+system.time({
+  intersected <- st_intersects(latlong_sf, census_tracts)
+})
 
-#Download census tract for il
-il <- tracts(state = 17)
-il <- st_as_sf(il)
-
-
-#Take cook county
-cook <- il %>% 
-  filter(COUNTYFP == "031 ") %>% 
-  st_union()
-
-cook %>% 
-  st_transform(3438) %>%   # IL State Plane in feet
-  st_buffer(5280) %>%      # One-mile buffer specified in feet
-  plot()
-  
-#import census data 
-cook_track <- tracts(state = "17", "031") %>% 
-  st_as_sf()
-  
-join_track_lead <- st_join(geocode_lead, cook_track)
-
-
-
-
-#City of Chicago data
-homeValues <- read_csv("/Users/RyanCiminski/desktop/chicago_homes.csv")
-
-taxdata_sample <- read_csv("https://raw.githubusercontent.com/nexen01/MATH497-teaam-1/main/csvs/Assessor-1.csv?token=GHSAT0AAAAAAB7BNVTBFSPREF4WHJPHUMPUY7T4Z4A")
-
-chilead <- read_csv("/Users/ryanciminski/desktop/Attempt2 - Initial.csv")
-
-
-#Federal Census 
-blockgroups <- block_groups(state="IL")
-blockgroups <- st_transform(blockgroups, "+proj=longlat +datum=WGS84")
-base_projection <- "+proj=longlat +datum=WGS84"
-
-geocode_lead_rowsample <- sample_rows <- sample(1:nrow(geocode_lead), 10)
-
-
-#Map it
-leaflet(blockgroups) %>%  addPolygons(color="blue",weight=2) %>% addProviderTiles("CartoDB.Positron") %>% addCircles(data = taxdata_sample, weight = 5, color ="red")
-
-leaflet(blockgroups) %>%  addPolygons(color="blue",weight=2) %>% addProviderTiles("CartoDB.Positron") %>% addCircles(data = geocode_lead_rowsample, weight = 1, color ="red")
-
-#Clean chilead
-
-names(chilead) <- make.names(names(chilead), unique=TRUE)
-
-unique_chilead <- print(unique(chilead[c("X1st.Draw")]))
-View(unique_chilead)
-
-#Cleaning out rows
-chilead$X1st.Draw <- gsub("See Follow-Up Sequential Sampling Table for Results", NA, chilead$X1st.Draw, fixed=TRUE) 
-chilead$X1st.Draw <- gsub("Customer declined further testing", NA, chilead$X1st.Draw, fixed=TRUE) 
-chilead$X1st.Draw <- gsub("<0.5", NA, chilead$X1st.Draw, fixed=TRUE) 
-chilead$X1st.Draw <- gsub("<1", NA, chilead$X1st.Draw, fixed=TRUE) 
-chilead$X1st.Draw <- gsub("Customer was non-responsive", NA, chilead$X1st.Draw, fixed=TRUE) 
-chilead$X1st.Draw <- gsub("<1.0", NA, chilead$X1st.Draw, fixed=TRUE) 
-chilead$X1st.Draw <- gsub("< 1", NA, chilead$X1st.Draw, fixed=TRUE) 
-
-#Calculate means 
-chilead$X1st.Draw <- as.numeric(chilead$X1st.Draw) 
-mean(chilead$X1st.Draw, na.rm=TRUE)
-
-#Clustering
-
-fit <- kmeans(chilead, 5)
-plot(chilead_fit) # plot results 
-summary(chilead_fit) # display the best model
-
-#ANOVA clustering
-
-chilead % > %
-	group_by(1st Draw) % > %
-	summarise(
-	  count_1st_draw = n(),
-		mean_time = mean(time, na.rm = TRUE),
-		sd_time = sd(time, na.rm = TRUE)
-	)
-	
-#Matching
-
-## Calculate Jaccard distance
-geo_match_noNA$jaccard_dist <-  base::apply(geo_match_noNA[,var_names],1,
-                                       function(y){y <- y[order(nchar(y))]; 
-                                       stringdist(paste(" ",y[1]," "),paste(" ",y[2]," "),
-                                                  method="jaccard",q=2)})
-## Calculate Cosine distance
-geo_match_noNA$cosine_dist <-  base::apply(geo_match_noNA[,var_names],1,
-                                      function(y){y <- y[order(nchar(y))]; 
-                                      stringdist(paste(" ",y[1]," "),paste(" ",y[2]," "),
-                                                 method="cosine",q=2)})  
-
-## Calculate Jaro-Winkler distance
-geo_match_noNA$jw_dist <-  base::apply(geo_match_noNA[,var_names],1,
-                                  function(y){y <- y[order(nchar(y))]; 
-                                  stringdist(paste(y[1]),paste(y[2]),
-                                             method="jw")}) 
-
-
-summary(chilead)
-
-## Plot the jw distance and the jaccard distance, and see how simlar they are.
-##  Note what appears to be a structural break around .6 on the x-axis.
-plot(jw_dist ~ jaccard_dist, data=geo_match_noNA)
-
-View(geo_match_noNA)
-
-
-load(url("https://github.com/nexen01/MATH497-teaam-1/raw/d36b56e45100b57dde559733bd8d83e1b0f61552/.RData"))
+latlong_final <- latlong_sf %>%
+  mutate(intersection = as.integer(intersected),
+         fips = if_else(is.na(intersection), "",
+                        census_tracts$GEOID[intersection]))
+head(latlong_final)
 
